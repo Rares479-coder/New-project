@@ -1,0 +1,7 @@
+Popescu Ana 10 9 9 10
+Ionescu Mihai 7 8 6
+Georgescu Ioana 9 10 10 9 10
+Dumitru Andrei 4 5 3 6
+Stan Elena 8 8 9
+Marin Radu 5 4 4
+Vasile Maria 10 10 10

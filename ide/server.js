@@ -2,7 +2,9 @@
 // Serveste interfata (Monaco + xterm), lucreaza cu fisierele din spatiul de lucru,
 // compileaza cu gcc/g++ si ruleaza programele interactiv (prin WebSocket).
 //
-// Pornire:  node server.js [folder-spatiu-de-lucru]     (implicit: folderul parinte)
+// Pornire:  node server.js [--retea] [folder-spatiu-de-lucru]   (implicit: folderul parinte)
+//   --retea  IDE-ul devine accesibil de pe telefon/tableta din aceeasi retea Wi-Fi,
+//            protejat de o cheie secreta (afisata ca link si cod QR).
 // Port:     variabila de mediu PORT (implicit 3000)
 
 'use strict';
@@ -15,9 +17,14 @@ const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
 const { WebSocketServer } = require('ws');
 
+const cliArgs = process.argv.slice(2);
+const LAN = cliArgs.includes('--retea') || cliArgs.includes('--lan') || process.env.IDE_RETEA === '1';
 const PORT = Number(process.env.PORT) || 3000;
-const HOST = process.env.HOST || '127.0.0.1'; // doar local, din motive de siguranta
-const WORKSPACE = path.resolve(process.argv[2] || path.join(__dirname, '..'));
+// Implicit doar local. In modul retea ascultam pe toate interfetele, dar cerem cheia.
+const HOST = process.env.HOST || (LAN ? '0.0.0.0' : '127.0.0.1');
+const WORKSPACE = path.resolve(cliArgs.find(a => !a.startsWith('--')) || path.join(__dirname, '..'));
+const ACCESS_KEY = LAN ? crypto.randomBytes(9).toString('base64url') : null;
+const COOKIE = 'ide_cheie';
 const PUBLIC = path.join(__dirname, 'public');
 const NM = path.join(__dirname, 'node_modules');
 const BUILD_DIR = path.join(os.tmpdir(), 'cpp-ide-build');
@@ -88,12 +95,59 @@ async function readTree(dir) {
   return out;
 }
 
+// ---------------------------------------------------------------- acces din retea (cheie)
+
+function cookieKey(req) {
+  const m = new RegExp('(?:^|;\\s*)' + COOKIE + '=([^;]+)').exec(req.headers.cookie || '');
+  return m ? decodeURIComponent(m[1]) : '';
+}
+function keyMatches(k) {
+  if (!ACCESS_KEY || !k) return false;
+  const a = Buffer.from(String(k)), b = Buffer.from(ACCESS_KEY);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+function isLocal(req) {
+  const ip = req.socket.remoteAddress || '';
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+// Cine are voie: oricine de pe calculatorul local; din retea doar cine are cheia (cookie).
+function authorized(req) { return !LAN || isLocal(req) || keyMatches(cookieKey(req)); }
+
+function lanAddresses() {
+  const out = [];
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const a of list || []) if (a.family === 'IPv4' && !a.internal) out.push(a.address);
+  }
+  return out;
+}
+
+const NO_KEY_PAGE = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IDE C/C++</title><body style="font-family:system-ui,sans-serif;background:#1e1e1e;color:#ccc;padding:24px;line-height:1.5">
+<h2>🔒 Ai nevoie de cheia de acces</h2>
+<p>Deschide link-ul complet afișat pe calculator (cel care se termină cu <code>?cheie=…</code>) sau scanează codul QR din terminal.</p></body>`;
+
+// ---------------------------------------------------------------- compilatoare
+
 function which(cmd) {
   return new Promise(resolve => {
     execFile(cmd, ['--version'], { timeout: 5000 }, (err, stdout) => {
       resolve(err ? null : String(stdout).split('\n')[0].trim());
     });
   });
+}
+
+// Cauta compilatoarele o singura data: g++/gcc, altfel clang (ex. Termux pe Android, macOS)
+let compilersCache = null;
+async function compilers() {
+  if (compilersCache) return compilersCache;
+  const pick = async names => {
+    for (const n of names) { const v = await which(n); if (v) return { cmd: n, version: v }; }
+    return null;
+  };
+  const [cpp, c] = await Promise.all([pick(['g++', 'clang++', 'c++']), pick(['gcc', 'clang', 'cc'])]);
+  compilersCache = { cpp, c };
+  if (!cpp || !c) setTimeout(() => { compilersCache = null; }, 10000); // reincearca dupa instalare
+  return compilersCache;
 }
 
 // ---------------------------------------------------------------- API HTTP
@@ -103,8 +157,8 @@ async function api(req, res, url) {
   const q = url.searchParams;
 
   if (route === '/api/info' && req.method === 'GET') {
-    const [gpp, gcc] = await Promise.all([which('g++'), which('gcc')]);
-    return send(res, 200, { workspace: WORKSPACE, workspaceName: path.basename(WORKSPACE), platform: process.platform, gpp, gcc });
+    const c = await compilers();
+    return send(res, 200, { workspace: WORKSPACE, workspaceName: path.basename(WORKSPACE), platform: process.platform, gpp: c.cpp && c.cpp.version, gcc: c.c && c.c.version, lan: LAN });
   }
 
   if (route === '/api/tree' && req.method === 'GET') {
@@ -192,6 +246,24 @@ async function serveStatic(req, res, url) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   try {
+    if (LAN && !isLocal(req)) {
+      // prima vizita de pe telefon: ?cheie=... -> o pastram intr-un cookie si curatam adresa
+      const k = url.searchParams.get('cheie');
+      if (k != null) {
+        if (!keyMatches(k)) return send(res, 403, NO_KEY_PAGE, 'text/html; charset=utf-8');
+        res.writeHead(302, {
+          'Set-Cookie': `${COOKIE}=${encodeURIComponent(k)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`,
+          Location: url.pathname,
+        });
+        return res.end();
+      }
+      const isLib = url.pathname.startsWith('/lib/');
+      if (!isLib && !authorized(req)) {
+        return url.pathname.startsWith('/api/')
+          ? send(res, 401, { error: 'Lipsește cheia de acces' })
+          : send(res, 401, NO_KEY_PAGE, 'text/html; charset=utf-8');
+      }
+    }
     if (url.pathname.startsWith('/api/')) await api(req, res, url);
     else await serveStatic(req, res, url);
   } catch (err) {
@@ -203,12 +275,13 @@ const server = http.createServer(async (req, res) => {
 
 // Mesaje de eroare frecvente, explicate pe intelesul unui incepator
 const HINTS = [
-  [/expected .*['‘];['’].* before/, 'Lipsește un punct și virgulă (;) la finalul instrucțiunii de pe rândul de dinainte.'],
+  [/expected .*['‘];['’].* (before|after)|expected ['‘];['’] (at end|after)/, 'Lipsește un punct și virgulă (;) la finalul instrucțiunii de pe rândul de dinainte.'],
   [/['‘](cout|cin|endl|string|vector)['’] was not declared|['‘](cout|cin|endl)['’] is not a member/, 'Pentru cin/cout ai nevoie de #include <iostream> și de using namespace std; (sau std::cout).'],
   [/['‘](printf|scanf)['’]|implicit declaration of function ['‘](printf|scanf|puts)/, 'Pentru printf/scanf ai nevoie de #include <stdio.h> (sau <cstdio> în C++).'],
   [/['‘](strlen|strcpy|strcmp|strcat|strtok|strchr|strstr)['’] was not declared|implicit declaration of function ['‘]str/, 'Pentru funcțiile pe șiruri ai nevoie de #include <cstring> (în C: <string.h>).'],
   [/['‘](sqrt|pow|abs|floor|ceil)['’] was not declared/, 'Pentru funcțiile matematice ai nevoie de #include <cmath> (în C: <math.h>).'],
-  [/was not declared in this scope|undeclared \(first use|implicit declaration of function/, 'Folosești un nume (variabilă/funcție) care nu a fost declarat. Verifică scrierea, declararea înainte de folosire sau #include-ul necesar.'],
+  [/use of undeclared identifier ['‘](cout|cin|endl)['’]/, 'Pentru cin/cout ai nevoie de #include <iostream> și de using namespace std; (sau std::cout).'],
+  [/was not declared in this scope|undeclared \(first use|implicit declaration of function|use of undeclared identifier/, 'Folosești un nume (variabilă/funcție) care nu a fost declarat. Verifică scrierea, declararea înainte de folosire sau #include-ul necesar.'],
   [/expected ['‘]?\}['’]? at end of input/, 'Lipsește o acoladă de închidere }. Numără acoladele deschise și închise.'],
   [/expected ['‘]?\)['’]? before|expected primary-expression/, 'Expresie incompletă: verifică parantezele și operatorii.'],
   [/No such file or directory/, 'Fișierul inclus nu există. Verifică numele bibliotecii din #include.'],
@@ -257,8 +330,11 @@ function wssHandler() {
 
   wss.on('connection', (ws, req) => {
     // Acceptam doar conexiuni din pagina servita de noi (protectie impotriva altor site-uri)
+    // Acceptam doar pagina servita de noi (aceeasi gazda) si, in modul retea, doar cu cheie
     const origin = req.headers.origin || '';
-    if (origin && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin)) { ws.close(); return; }
+    let sameHost = !origin;
+    try { sameHost = sameHost || new URL(origin).host === req.headers.host; } catch { /* origine invalida */ }
+    if (!sameHost || !authorized(req)) { ws.close(1008, 'Neautorizat'); return; }
 
     let proc = null;      // procesul care ruleaza (compilator sau program)
     let phase = 'idle';   // idle | compiling | running
@@ -293,14 +369,17 @@ function wssHandler() {
       const outDir = path.join(BUILD_DIR, id);
       await fsp.mkdir(outDir, { recursive: true });
       const exe = path.join(outDir, path.basename(src, ext) + (IS_WIN ? '.exe' : ''));
+      // fisierul se compileaza din folderul lui; daca numele incepe cu '-' il prefixam cu ./
+      const srcArg = (path.basename(src).startsWith('-') ? './' : '') + path.basename(src);
 
-      const compiler = isC ? 'gcc' : 'g++';
+      const found = await compilers();
+      const compiler = (isC ? found.c : found.cpp)?.cmd || (isC ? 'gcc' : 'g++');
       const standard = isC ? (/^(c89|c99|c11|c17|c23|gnu\d+)$/.test(std) ? std : 'c11')
                            : (/^(c\+\+(11|14|17|20|23)|gnu\+\+\d+)$/.test(std) ? std : 'c++17');
       const args = [
         `-std=${standard}`, '-Wall', '-Wextra', optimize ? '-O2' : '-g',
         '-fdiagnostics-color=always', '-include', UNBUFFER_H,
-        path.basename(src), '-o', exe, ...(isC ? ['-lm'] : []),
+        srcArg, '-o', exe, ...(isC ? ['-lm'] : []),
       ];
 
       if (!runOnly) {
@@ -348,9 +427,21 @@ function wssHandler() {
 
 server.listen(PORT, HOST, () => {
   console.log('\n  IDE C/C++ pornit!');
-  console.log(`  Deschide în browser:  http://localhost:${PORT}`);
-  console.log(`  Spațiu de lucru:      ${WORKSPACE}\n`);
-  console.log('  (Ctrl+C pentru oprire)\n');
+  console.log(`  Pe acest calculator:  http://localhost:${PORT}`);
+  console.log(`  Spațiu de lucru:      ${WORKSPACE}`);
+  if (LAN) {
+    const ips = lanAddresses();
+    if (!ips.length) console.log('\n  ⚠ Nu am găsit nicio rețea. Conectează calculatorul la Wi-Fi.');
+    else {
+      const url = `http://${ips[0]}:${PORT}/?cheie=${ACCESS_KEY}`;
+      console.log('\n  📱 Pe telefon (aceeași rețea Wi-Fi), scanează codul QR sau deschide:');
+      for (const ip of ips) console.log(`     http://${ip}:${PORT}/?cheie=${ACCESS_KEY}`);
+      try { require('qrcode-terminal').generate(url, { small: true }, q => console.log('\n' + q.replace(/^/gm, '     '))); } catch { /* fara QR */ }
+      console.log('  Cheia se schimbă la fiecare pornire. Nu o da altor persoane:');
+      console.log('  cine o are poate rula programe pe calculatorul tău.');
+    }
+  }
+  console.log('\n  (Ctrl+C pentru oprire)\n');
 });
 server.on('error', e => {
   if (e.code === 'EADDRINUSE') console.error(`Portul ${PORT} este ocupat. Încearcă: PORT=3001 npm start`);

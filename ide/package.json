@@ -5,7 +5,8 @@
   "main": "server.js",
   "private": true,
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "telefon": "node server.js --retea"
   },
   "engines": {
     "node": ">=18"
@@ -15,6 +16,7 @@
     "@xterm/xterm": "5.5.0",
     "marked": "15.0.12",
     "monaco-editor": "0.52.2",
+    "qrcode-terminal": "0.12.0",
     "ws": "8.22.1"
   }
 }

@@ -2,7 +2,10 @@
 <html lang="ro">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#3c3c3c">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <title>IDE C/C++</title>
   <link rel="stylesheet" href="/lib/xterm/css/xterm.css">
   <link rel="stylesheet" href="/style.css">
@@ -11,7 +14,7 @@
   <div id="app">
     <!-- bara de titlu -->
     <header id="titlebar">
-      <div class="brand"><span class="logo">C++</span> IDE pentru învățat</div>
+      <div class="brand"><button id="btn-menu" class="icon" title="Fișiere și lecții" aria-label="Meniu">☰</button><span class="logo">C++</span> <span class="brand-text">IDE pentru învățat</span></div>
       <div class="title-actions">
         <select id="std-select" title="Standardul limbajului C++">
           <option value="c++11">C++11</option>
@@ -19,8 +22,8 @@
           <option value="c++17" selected>C++17</option>
           <option value="c++20">C++20</option>
         </select>
-        <button id="btn-run" class="primary" title="Compilează și rulează (F5 sau Ctrl+Enter)">▶ Rulează</button>
-        <button id="btn-stop" title="Oprește programul (Shift+F5)" disabled>■ Oprește</button>
+        <button id="btn-run" class="primary" title="Compilează și rulează (F5 sau Ctrl+Enter)">▶<span class="lbl"> Rulează</span></button>
+        <button id="btn-stop" title="Oprește programul (Shift+F5)" disabled>■<span class="lbl"> Oprește</span></button>
         <button id="btn-theme" class="icon" title="Temă luminoasă / întunecată">Temă</button>
         <button id="btn-help" class="icon" title="Scurtături de tastatură">?</button>
       </div>
@@ -39,6 +42,10 @@
 
       <!-- bara laterala -->
       <aside id="sidebar">
+        <div id="side-switch">
+          <button data-view="explorer" class="active">📁 Fișiere</button>
+          <button data-view="lessons">📖 Lecții</button>
+        </div>
         <section id="view-explorer" class="view">
           <div class="view-header">
             <span id="ws-name">EXPLORATOR</span>
@@ -57,6 +64,7 @@
         </section>
       </aside>
       <div class="splitter vertical" id="split-sidebar"></div>
+      <div id="backdrop"></div>
 
       <!-- zona de lucru -->
       <section id="workbench">
@@ -76,6 +84,7 @@
             <button class="primary" id="btn-welcome-new">Creează primul meu program</button>
           </div>
         </div>
+        <div id="keybar" aria-label="Simboluri C++"></div>
         <div class="splitter horizontal" id="split-panel"></div>
         <div id="panel">
           <div id="panel-tabs">
@@ -83,9 +92,17 @@
             <button class="ptab" data-panel="problems">PROBLEME <span id="problem-count" class="badge hidden">0</span></button>
             <div class="spacer"></div>
             <button class="icon" id="btn-clear" title="Golește terminalul">⌫</button>
+            <button class="icon" id="btn-panel-max" title="Mărește panoul">⤢</button>
             <button class="icon" id="btn-panel-close" title="Ascunde panoul (Ctrl+`)">✕</button>
           </div>
-          <div id="panel-terminal" class="pbody"><div id="terminal"></div></div>
+          <div id="panel-terminal" class="pbody">
+            <div id="terminal"></div>
+            <form id="term-input" autocomplete="off">
+              <input type="text" id="term-line" placeholder="Scrie datele aici…" enterkeyhint="send" autocapitalize="off" autocorrect="off" spellcheck="false" disabled>
+              <button type="submit" class="primary" id="term-send" disabled>⏎</button>
+              <button type="button" id="term-eof" title="Sfârșit de fișier (Ctrl+D)" disabled>EOF</button>
+            </form>
+          </div>
           <div id="panel-problems" class="pbody hidden"><div id="problems"></div></div>
         </div>
       </section>

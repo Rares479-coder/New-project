@@ -70,6 +70,9 @@ int main(void) {
   empty: '',
 };
 
+// Monaco anuleaza intern unele operatii (ex. sugestii) si arunca „Canceled”: nu e o eroare reala
+window.addEventListener('unhandledrejection', e => { if (e.reason && e.reason.name === 'Canceled') e.preventDefault(); });
+
 // ================================================================ starea aplicatiei
 
 const state = {
@@ -88,6 +91,25 @@ const state = {
 
 let monaco, editor, term, fitAddon, ws;
 
+// telefon / tableta
+const mqMobile = matchMedia('(max-width: 768px)');
+const mqTouch = matchMedia('(pointer: coarse)');
+const isMobile = () => mqMobile.matches;
+const isTouch = () => mqTouch.matches;
+
+// Pe telefon, cand apare tastatura, pastram interfata in zona vizibila (mai ales pe iPhone)
+function fitToViewport() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  document.documentElement.style.setProperty('--app-h', vv.height + 'px');
+  document.documentElement.style.setProperty('--app-top', vv.offsetTop + 'px');
+}
+if (window.visualViewport) {
+  visualViewport.addEventListener('resize', fitToViewport);
+  visualViewport.addEventListener('scroll', fitToViewport);
+  fitToViewport();
+}
+
 // ================================================================ pornire
 
 require.config({ paths: { vs: '/lib/monaco/vs' } });
@@ -100,6 +122,7 @@ require(['vs/editor/editor.main'], async m => {
   setupTerminal();
   setupLayout();
   setupUI();
+  setupMobile();
   connect();
 
   state.info = await (await apiGet('/api/info')).json();
@@ -154,6 +177,24 @@ function setupEditor() {
   editor.onDidChangeConfiguration(() => store.set('fontSize', editor.getOption(monaco.editor.EditorOption.fontSize)));
 
   registerCompletions();
+  applyEditorMode();
+  mqMobile.addEventListener('change', applyEditorMode);
+}
+
+// Pe ecran mic: fara minimap, cu rupere de rand, margini mai inguste
+function applyEditorMode() {
+  const m = isMobile();
+  editor.updateOptions({
+    minimap: { enabled: !m },
+    wordWrap: m ? 'on' : 'off',
+    lineNumbersMinChars: m ? 2 : 5,
+    lineDecorationsWidth: m ? 4 : 10,
+    folding: !m,
+    glyphMargin: !m,
+    stickyScroll: { enabled: !m },
+    scrollbar: { verticalScrollbarSize: m ? 6 : 14, horizontalScrollbarSize: m ? 6 : 12 },
+    contextmenu: !isTouch(),
+  });
 }
 
 // Fragmente de cod (snippets) + cuvinte cheie, pentru autocompletare
@@ -244,8 +285,9 @@ function activate(id) {
   state.active = id;
   const t = activeTab();
   if (t) { state.selected = t.path; revealInTree(t.path); }
+  if (isMobile()) { closeDrawer(); setPanelMax(false); }
   render();
-  if (t && t.mode === 'code') setTimeout(() => editor.focus(), 0);
+  if (t && t.mode === 'code' && !isTouch()) setTimeout(() => editor.focus(), 0);
 }
 
 async function closeTab(id) {
@@ -294,6 +336,7 @@ function render() {
   $('#btn-run').disabled = state.running || !t || !isRunnable(t.path);
   renderTreeSelection();
   renderLessonSelection();
+  if (typeof updateKeybar === 'function' && $('#keybar').children.length) updateKeybar();
   store.set('tabs', state.tabs.map(x => ({ path: x.path, mode: x.mode })));
   store.set('active', state.active);
   document.title = (t ? base(t.path) + ' — ' : '') + 'IDE C/C++';
@@ -444,6 +487,10 @@ function renderTree() {
         renderTreeSelection();
       };
       row.ondblclick = () => { if (n.type === 'file' && ext(n.path) === 'md') openFile(n.path, { mode: 'code' }); };
+      const more = el('button', 'nmore', '⋯');
+      more.title = 'Opțiuni';
+      more.onclick = e => { e.stopPropagation(); state.selected = n.path; renderTreeSelection(); const r = more.getBoundingClientRect(); nodeMenu({ clientX: r.left, clientY: r.bottom }, n); };
+      row.appendChild(more);
       row.oncontextmenu = e => { e.preventDefault(); e.stopPropagation(); state.selected = n.path; renderTreeSelection(); nodeMenu(e, n); };
       box.appendChild(row);
       if (n.type === 'dir' && open) walk(n.children, depth + 1);
@@ -604,6 +651,8 @@ function setupTerminal() {
   fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.open($('#terminal'));
+  term.options.disableStdin = isTouch();
+  mqTouch.addEventListener('change', () => { term.options.disableStdin = isTouch(); });
   new ResizeObserver(() => { try { fitAddon.fit(); } catch { /* ascuns */ } }).observe($('#terminal'));
 
   term.writeln('\x1b[1;36mIDE C/C++\x1b[0m — apasă \x1b[1mF5\x1b[0m ca să compilezi și să rulezi fișierul deschis.');
@@ -695,11 +744,14 @@ function onMessage(m) {
       setStatus('▶ Rulează — scrie datele în terminal');
       termWrite(`\x1b[90m── programul rulează (folder: ${m.cwd}) ──\x1b[0m\r\n`);
       lastOutputEndsWithNewline = true;
-      term.focus();
+      if (isMobile()) setPanelMax(true);
+      if (!isTouch()) term.focus();
       break;
     case 'out':
       termWrite(m.stream === 'err' ? `\x1b[31m${m.data}\x1b[0m` : m.data);
       lastOutputEndsWithNewline = /\n$/.test(m.data);
+      // un text fara Enter la final e de obicei o intrebare ("n = "): deschidem tastatura
+      if (isTouch() && !lastOutputEndsWithNewline && document.activeElement !== $('#term-line')) $('#term-line').focus();
       break;
     case 'exit': {
       const secs = (m.time / 1000).toFixed(2);
@@ -735,6 +787,8 @@ function setRunning(on) {
   stopRequested = false;
   $('#statusbar').classList.toggle('running', on);
   $('#btn-stop').disabled = !on;
+  for (const id of ['#term-line', '#term-send', '#term-eof']) $(id).disabled = !on;
+  if (!on && document.activeElement === $('#term-line')) $('#term-line').blur();
   const t = activeTab();
   $('#btn-run').disabled = on || !t || !isRunnable(t.path);
   if (!on) setStatus('Gata');
@@ -786,6 +840,7 @@ function wordEnd(model, line, col) {
 }
 async function goToDiagnostic(d, focus) {
   if (!findNode(d.file)) return;
+  if (isMobile()) setPanelMax(false);
   await openFile(d.file, { mode: 'code' });
   editor.revealLineInCenter(d.line);
   editor.setPosition({ lineNumber: d.line, column: d.column });
@@ -797,7 +852,7 @@ async function goToDiagnostic(d, focus) {
 function setupLayout() {
   const sidebar = $('#sidebar'), panel = $('#panel');
   sidebar.style.width = store.get('sidebarW', 260) + 'px';
-  panel.style.height = store.get('panelH', 260) + 'px';
+  panel.style.height = (isMobile() ? Math.min(store.get('panelHm', 0) || innerHeight * 0.38, innerHeight * 0.6) : store.get('panelH', 260)) + 'px';
   if (store.get('panelHidden', false)) togglePanel(false);
   if (store.get('sidebarHidden', false)) sidebar.classList.add('hidden');
 
@@ -807,18 +862,24 @@ function setupLayout() {
   }, () => ({ w: sidebar.offsetWidth }), 'x');
   drag($('#split-panel'), (dy, start) => {
     const h = Math.max(80, Math.min(window.innerHeight * 0.8, start.h - dy));
-    panel.style.height = h + 'px'; store.set('panelH', h);
+    panel.style.height = h + 'px'; store.set(isMobile() ? 'panelHm' : 'panelH', h);
   }, () => ({ h: panel.offsetHeight }), 'y');
 }
+// functioneaza cu mouse-ul si cu degetul (pointer events)
 function drag(handle, onMove, getStart, axis) {
-  handle.addEventListener('mousedown', e => {
+  handle.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
     e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
     const s = getStart(), x0 = e.clientX, y0 = e.clientY;
     handle.classList.add('dragging');
     document.body.style.cursor = axis === 'x' ? 'col-resize' : 'row-resize';
     const move = ev => onMove(axis === 'x' ? ev.clientX - x0 : ev.clientY - y0, s);
-    const up = () => { handle.classList.remove('dragging'); document.body.style.cursor = ''; removeEventListener('mousemove', move); removeEventListener('mouseup', up); };
-    addEventListener('mousemove', move); addEventListener('mouseup', up);
+    const up = () => {
+      handle.classList.remove('dragging'); document.body.style.cursor = '';
+      handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', up); handle.removeEventListener('pointercancel', up);
+    };
+    handle.addEventListener('pointermove', move); handle.addEventListener('pointerup', up); handle.addEventListener('pointercancel', up);
   });
 }
 function togglePanel(show) {
@@ -839,6 +900,14 @@ function showPanel(name) {
 function showView(name) {
   const sidebar = $('#sidebar');
   const btn = document.querySelector(`.act[data-view="${name}"]`);
+  for (const b of document.querySelectorAll('#side-switch button')) b.classList.toggle('active', b.dataset.view === name);
+  if (isMobile()) {
+    sidebar.classList.remove('hidden');
+    for (const b of document.querySelectorAll('.act')) b.classList.toggle('active', b === btn);
+    for (const v of document.querySelectorAll('.view')) v.classList.toggle('hidden', v.id !== 'view-' + name);
+    store.set('view', name);
+    return;
+  }
   if (btn.classList.contains('active') && !sidebar.classList.contains('hidden')) {
     sidebar.classList.add('hidden'); $('#split-sidebar').classList.add('hidden'); store.set('sidebarHidden', true); return;
   }
@@ -989,4 +1058,84 @@ function toast(text) {
   setStatus(text);
   clearTimeout(toast.t);
   toast.t = setTimeout(() => setStatus(state.running ? '▶ Rulează' : 'Gata'), 4000);
+}
+
+// ================================================================ telefon
+
+function openDrawer() { document.body.classList.add('drawer-open'); }
+function closeDrawer() { document.body.classList.remove('drawer-open'); }
+
+function setPanelMax(on) {
+  on = on ?? !$('#panel').classList.contains('max');
+  if (on) togglePanel(true);
+  $('#panel').classList.toggle('max', on);
+  $('#workbench').classList.toggle('panel-max', on);
+  const b = $('#btn-panel-max');
+  b.textContent = on ? '⤡' : '⤢';
+  b.title = on ? 'Înapoi la cod' : 'Mărește panoul';
+  setTimeout(() => { try { fitAddon.fit(); } catch { /* */ } }, 0);
+}
+
+function setupMobile() {
+  $('#btn-menu').onclick = () => (document.body.classList.contains('drawer-open') ? closeDrawer() : openDrawer());
+  $('#backdrop').onclick = closeDrawer;
+  for (const b of document.querySelectorAll('#side-switch button')) b.onclick = () => showView(b.dataset.view);
+  const view = store.get('view', 'explorer');
+  for (const b of document.querySelectorAll('#side-switch button')) b.classList.toggle('active', b.dataset.view === view);
+  $('#btn-panel-max').onclick = () => setPanelMax();
+  mqMobile.addEventListener('change', () => { if (!isMobile()) { closeDrawer(); } });
+
+  // inchide sertarul dupa ce alegi o lectie sau deschizi un fisier
+  $('#lessons').addEventListener('click', () => { if (isMobile()) closeDrawer(); });
+
+  // ---- campul de introducere a datelor (ecran tactil)
+  const input = $('#term-line');
+  $('#term-input').onsubmit = e => {
+    e.preventDefault();
+    if (!state.running) return;
+    const line = input.value;
+    term.write(line + '\r\n');
+    send({ type: 'stdin', data: line + '\n' });
+    input.value = '';
+    input.focus(); // tastatura ramane deschisa pentru urmatoarea valoare
+  };
+  $('#term-eof').onclick = () => {
+    if (input.value) { term.write(input.value); send({ type: 'stdin', data: input.value }); input.value = ''; }
+    term.write('^D\r\n');
+    send({ type: 'eof' });
+  };
+  $('#terminal').addEventListener('click', () => { if (isTouch() && state.running) input.focus(); });
+
+  // ---- bara de simboluri de deasupra tastaturii
+  const keys = [
+    ['⇥', 'tab', 'Tab (indentare)'], ['{', '{'], ['}', '}'], ['(', '('], [')', ')'], [';', ';'], ['[', '['], [']', ']'],
+    ['<<', ' << '], ['>>', ' >> '], ['=', '='], ['"', '"'], ["'", "'"], ['<', '<'], ['>', '>'], ['+', '+'], ['-', '-'],
+    ['*', '*'], ['/', '/'], ['%', '%'], ['&', '&'], ['|', '|'], ['!', '!'], ['#', '#'], [',', ','], ['.', '.'], [':', ':'],
+    ['\\', '\\'], ['_', '_'], ['←', 'left', 'Cursor la stânga'], ['→', 'right', 'Cursor la dreapta'],
+    ['↑', 'up', 'Rândul de sus'], ['↓', 'down', 'Rândul de jos'], ['↶', 'undo', 'Anulează'], ['↷', 'redo', 'Refă'],
+  ];
+  const actions = {
+    tab: 'tab', left: 'cursorLeft', right: 'cursorRight', up: 'cursorUp', down: 'cursorDown', undo: 'undo', redo: 'redo',
+  };
+  const bar = $('#keybar');
+  for (const [label, value, title] of keys) {
+    const b = el('button', label.length > 1 && !actions[value] ? 'wide' : null, label);
+    if (title) b.title = title;
+    // pointerdown + preventDefault: editorul nu pierde focusul, deci tastatura nu se inchide
+    b.addEventListener('pointerdown', e => e.preventDefault());
+    b.addEventListener('click', e => {
+      e.preventDefault();
+      if (actions[value]) {
+        if (value === 'undo' || value === 'redo') editor.trigger('keybar', value, null);
+        else editor.trigger('keybar', actions[value], {});
+      } else editor.trigger('keybar', 'type', { text: value });
+      editor.focus();
+    });
+    bar.appendChild(b);
+  }
+  updateKeybar();
+}
+function updateKeybar() {
+  const t = activeTab();
+  $('#keybar').classList.toggle('hidden', !t || t.mode !== 'code');
 }

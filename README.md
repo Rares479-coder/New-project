@@ -34,6 +34,8 @@ npm start     # apoi deschide http://localhost:3000
 ```
 Pe Windows: dublu-click pe `ide/porneste.bat`. Detalii în [ide/README.md](ide/README.md).
 
+**Merge și pe telefon:** pornește cu `npm run telefon` (sau `ide/porneste-telefon.bat`) și scanează codul QR afișat. Pe Android poți rula totul direct pe telefon, cu Termux. Vezi [ide/README.md](ide/README.md#pe-telefon-).
+
 ## Cum compilezi și rulezi (fără IDE)
 
 Ai nevoie de un compilator C++ (g++ / MinGW, sau un IDE precum Code::Blocks, CLion, Visual Studio Code).

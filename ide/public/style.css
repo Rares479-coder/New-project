@@ -44,7 +44,11 @@ kbd {
 .hidden { display: none !important; }
 .spacer { flex: 1; }
 
-#app { display: flex; flex-direction: column; height: 100vh; }
+#app {
+  display: flex; flex-direction: column; position: fixed; left: 0; right: 0; top: var(--app-top, 0px);
+  height: 100vh; height: var(--app-h, 100dvh);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+}
 
 /* ---- bara de titlu */
 #titlebar {
@@ -57,6 +61,7 @@ kbd {
 }
 .title-actions { display: flex; gap: 6px; align-items: center; }
 #btn-run { font-weight: 600; }
+#btn-menu, #side-switch, #backdrop, #keybar { display: none; }
 
 #main { flex: 1; display: flex; min-height: 0; }
 
@@ -88,7 +93,8 @@ kbd {
 #tree:focus .node.selected { border-color: var(--focus); }
 .node .twisty { width: 16px; text-align: center; font-size: 10px; color: var(--fg-dim); flex: none; }
 .node .ficon { width: 18px; flex: none; font-size: 10px; font-weight: 700; text-align: center; margin-right: 4px; }
-.node .fname { overflow: hidden; text-overflow: ellipsis; }
+.node .fname { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.node .nmore { display: none; flex: none; background: none; border: none; font-size: 18px; padding: 0 10px; color: var(--fg-dim); }
 .node.dirty .fname::after { content: " ●"; color: var(--fg-dim); }
 .node input { width: 100%; padding: 0 4px; height: 20px; }
 .ic-cpp { color: #519aba; } .ic-c { color: #a074c4; } .ic-h { color: #a074c4; }
@@ -106,6 +112,7 @@ kbd {
 /* ---- separatoare redimensionabile */
 .splitter { flex: none; background: transparent; z-index: 5; }
 .splitter.vertical { width: 4px; cursor: col-resize; margin-left: -2px; margin-right: -2px; }
+.splitter { touch-action: none; }
 .splitter.horizontal { height: 4px; cursor: row-resize; margin-top: -2px; margin-bottom: -2px; }
 .splitter:hover, .splitter.dragging { background: var(--focus); }
 
@@ -164,7 +171,13 @@ kbd {
 .ptab.active { color: var(--fg-strong); border-bottom-color: var(--fg-strong); }
 .badge { background: var(--accent); color: #fff; border-radius: 9px; padding: 0 6px; font-size: 10px; margin-left: 2px; }
 .pbody { flex: 1; min-height: 0; overflow: hidden; }
-#terminal { height: 100%; padding: 0 0 0 12px; }
+#panel-terminal { display: flex; flex-direction: column; }
+#terminal { flex: 1; min-height: 0; padding: 0 0 0 12px; }
+#term-input { display: none; flex: none; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--border); }
+#term-input input { flex: 1; min-width: 0; font: 16px ui-monospace, Consolas, monospace; padding: 6px 8px; }
+#term-input button { min-width: 44px; }
+#panel.max { flex: 1; height: auto !important; }
+#workbench.panel-max #editor-area, #workbench.panel-max #keybar, #workbench.panel-max #split-panel { display: none !important; }
 #problems { height: 100%; overflow: auto; padding: 0 0 10px; }
 .problem { display: flex; gap: 8px; padding: 3px 14px; cursor: pointer; align-items: flex-start; }
 .problem:hover { background: var(--bg-hover); }
@@ -202,9 +215,82 @@ kbd {
 .modal-box .tpl { display: flex; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
 .modal-box .tpl label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
 
-@media (max-width: 700px) {
-  #sidebar { width: 180px; }
-  .brand { font-size: 12px; }
-  #btn-help, #std-select { display: none; }
-  .markdown { padding: 16px; }
+/* ---- ecrane tactile (telefon / tableta): bara de introducere date pentru terminal */
+@media (pointer: coarse) {
+  #term-input { display: flex; }
+  .markdown pre .code-actions { opacity: 1; }
+  .tab .tclose { visibility: visible; }
+}
+
+/* ---- telefon */
+@media (max-width: 768px) {
+  #titlebar { height: 44px; padding: 0 6px; }
+  .brand { gap: 4px; }
+  .brand-text, #btn-help { display: none; }
+  #btn-menu { display: block; font-size: 20px; padding: 4px 10px; }
+  .title-actions { gap: 4px; }
+  .title-actions button { min-height: 34px; min-width: 40px; }
+  #std-select { min-height: 34px; padding: 2px; }
+  .lbl { display: none; }
+
+  #activitybar, #split-sidebar { display: none !important; }
+  #sidebar {
+    display: flex !important; position: fixed; z-index: 60; left: 0; top: 0; bottom: 0;
+    width: min(86vw, 340px) !important; transform: translateX(-102%); transition: transform .2s ease;
+    box-shadow: 4px 0 24px rgba(0,0,0,.4); padding-top: env(safe-area-inset-top);
+  }
+  body.drawer-open #sidebar { transform: none; }
+  #backdrop { position: fixed; inset: 0; z-index: 55; background: rgba(0,0,0,.45); }
+  body.drawer-open #backdrop { display: block; }
+  #side-switch { display: flex; gap: 6px; padding: 8px; flex: none; }
+  #side-switch button { flex: 1; padding: 8px; background: transparent; }
+  #side-switch button.active { background: var(--bg-sel); border-color: var(--focus); }
+  .view-header { padding-left: 12px; }
+  .view-actions button { font-size: 18px; padding: 6px 9px; }
+
+  .node { height: 38px; font-size: 14px; }
+  .node .nmore { display: block; }
+  .lesson { padding: 10px 14px; }
+
+  #tabs { height: 40px; }
+  .tab { min-width: 0; max-width: 170px; padding-left: 10px; }
+  .tab .tclose { visibility: visible; width: 28px; height: 28px; }
+
+  #keybar {
+    display: flex; flex: none; gap: 4px; overflow-x: auto; padding: 5px 6px; background: var(--bg-side);
+    border-top: 1px solid var(--border); scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  #keybar::-webkit-scrollbar { display: none; }
+  #keybar.hidden { display: none; }
+  #keybar button {
+    flex: none; min-width: 38px; height: 36px; padding: 0 8px; font: 15px ui-monospace, Consolas, monospace;
+    touch-action: manipulation; user-select: none; -webkit-user-select: none;
+  }
+  #keybar button.wide { font: 13px inherit; }
+
+  .splitter.horizontal { height: 14px; margin: 0; background: var(--bg-side); position: relative; touch-action: none; }
+  .splitter.horizontal::after {
+    content: ""; position: absolute; left: 50%; top: 5px; width: 40px; height: 4px; margin-left: -20px;
+    border-radius: 2px; background: var(--fg-dim); opacity: .6;
+  }
+  #panel { min-height: 120px; }
+  #panel-tabs { height: 38px; }
+  #panel-tabs .icon { font-size: 17px; padding: 4px 10px; }
+  .ptab { padding: 8px 8px; }
+  #terminal { padding-left: 6px; }
+  .problem { padding: 8px 12px; }
+
+  #statusbar { gap: 10px; padding-bottom: env(safe-area-inset-bottom); height: calc(22px + env(safe-area-inset-bottom)); }
+  #st-compiler, #st-cursor, #st-lang { display: none; }
+  #st-state { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+  .markdown { padding: 12px 14px 60px; font-size: 15px; }
+  .markdown .md-toolbar { margin: -12px -14px 0 0; top: -12px; }
+  .markdown table { display: block; overflow-x: auto; }
+  .markdown pre { font-size: 12px; }
+  #welcome h1 { font-size: 24px; }
+  #welcome ul { display: none; }
+  #modal { padding-top: 6vh; }
+  .modal-box input[type=text] { font-size: 16px; } /* evita zoom-ul automat pe iPhone */
+  #ctxmenu .item { padding: 10px 20px; font-size: 15px; }
 }

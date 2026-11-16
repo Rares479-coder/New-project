@@ -23,7 +23,18 @@ Fiecare capitol are:
 | 10 | [Combinatorică](10-combinatorica) | Generatorul (backtracking) | permutări, aranjamente, combinări, submulțimi, n regine |
 | 11 | [Grafuri](11-grafuri) | Harta orașelor | matrice de adiacență, BFS, DFS, componente conexe, Roy-Floyd, arbori |
 
-## Cum compilezi și rulezi
+## IDE-ul inclus (recomandat)
+
+În folderul [`ide/`](ide) găsești un mediu de lucru în browser, în stilul Visual Studio Code: editor cu autocompletare, buton **▶ Rulează**, terminal în care introduci datele, erori de compilare explicate în română și lecțiile de mai sus cu butonul **▶ Încearcă** la fiecare exemplu.
+
+```bash
+cd ide
+npm install   # prima dată
+npm start     # apoi deschide http://localhost:3000
+```
+Pe Windows: dublu-click pe `ide/porneste.bat`. Detalii în [ide/README.md](ide/README.md).
+
+## Cum compilezi și rulezi (fără IDE)
 
 Ai nevoie de un compilator C++ (g++ / MinGW, sau un IDE precum Code::Blocks, CLion, Visual Studio Code).
 
